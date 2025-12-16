@@ -1,0 +1,56 @@
+# Hunter Drone - High Accuracy Profile
+# Optimized for maximum detection/tracking accuracy
+
+ingest:
+  source_type: file
+  source_uri: ""
+  buffer_size: 10
+  timeout_ms: 10000
+
+preprocess:
+  input_size: [1280, 1280]  # Larger input = better accuracy
+  normalize_mean: [0.485, 0.456, 0.406]
+  normalize_std: [0.229, 0.224, 0.225]
+  pixel_format: RGB
+
+detector:
+  model_path: models/yolo11x.pt  # Extra-large model = best accuracy
+  model_type: yolo
+  confidence_threshold: 0.3  # Lower threshold to catch more detections
+  nms_threshold: 0.4
+  max_detections: 200
+  device: cuda
+
+embedder:
+  enabled: true
+  model_path: models/embedder.onnx
+  embedding_dim: 256  # Larger embedding
+  input_size: [256, 256]  # Larger crop
+  device: cuda
+
+tracking:
+  lock_confirm_frames: 5   # More confirmation for reliability
+  lock_timeout_frames: 10
+  lost_timeout_frames: 60  # Longer before declaring lost
+  recover_max_frames: 30   # Longer recovery window
+  recover_confirm_frames: 3
+  process_noise: 0.5       # Lower noise = smoother tracking
+  measurement_noise: 2.0
+  iou_threshold: 0.4       # Higher threshold = stricter matching
+  embedding_weight: 0.5    # Strong reliance on appearance
+  gate_threshold: 0.05     # Consider more potential matches
+  trajectory_max_length: 300
+  trajectory_output_points: 20
+
+output:
+  sink_type: json
+  output_path: output/results.jsonl
+  output_frequency: every_frame
+  pretty_print: true
+
+logging:
+  level: DEBUG
+  format: json
+  log_file: logs/hunter.log
+  log_stage_timings: true
+  log_track_changes: true

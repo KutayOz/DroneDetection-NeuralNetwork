@@ -1,0 +1,70 @@
+# Hunter Drone Detection & Tracking System
+# Default Configuration
+
+# Video input settings
+ingest:
+  source_type: file  # file, rtsp, stub
+  source_uri: ""  # Path to video file or RTSP URL
+  buffer_size: 5
+  timeout_ms: 5000
+
+# Image preprocessing
+preprocess:
+  input_size: [640, 640]  # [width, height]
+  normalize_mean: [0.485, 0.456, 0.406]
+  normalize_std: [0.229, 0.224, 0.225]
+  pixel_format: RGB
+
+# YOLO11 detector settings
+detector:
+  model_path: models/yolo11m.pt  # yolo11n, yolo11s, yolo11m, yolo11l, yolo11x
+  model_type: yolo
+  confidence_threshold: 0.5
+  nms_threshold: 0.45
+  max_detections: 100
+  device: cuda  # cuda, cpu, mps
+
+# Siamese embedder settings
+embedder:
+  enabled: true
+  model_path: models/embedder.onnx
+  embedding_dim: 128
+  input_size: [128, 128]
+  device: cuda
+
+# Tracking settings
+tracking:
+  # State machine (Eagle Model)
+  lock_confirm_frames: 3      # Frames to confirm LOCK → TRACK
+  lock_timeout_frames: 5      # Max frames in LOCK before DROP
+  lost_timeout_frames: 30     # Frames before TRACK → LOST
+  recover_max_frames: 15      # Max frames to attempt recovery
+  recover_confirm_frames: 2   # Frames to confirm RECOVER → TRACK
+
+  # Kalman filter
+  process_noise: 1.0
+  measurement_noise: 1.0
+
+  # Association (Hungarian algorithm)
+  iou_threshold: 0.3
+  embedding_weight: 0.3  # 0 = IoU only, 1 = embedding only
+  gate_threshold: 0.1    # Minimum IoU to consider
+
+  # Trajectory
+  trajectory_max_length: 150
+  trajectory_output_points: 10
+
+# Output settings
+output:
+  sink_type: stub  # stub, json, udp
+  output_path: null  # Path for file output
+  output_frequency: every_frame  # every_frame, on_change
+  pretty_print: false
+
+# Logging settings
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR
+  format: json  # json, console
+  log_file: null  # Path for log file
+  log_stage_timings: true
+  log_track_changes: true

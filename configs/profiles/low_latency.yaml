@@ -1,0 +1,56 @@
+# Hunter Drone - Low Latency Profile
+# Optimized for minimum latency (real-time applications)
+
+ingest:
+  source_type: file
+  source_uri: ""
+  buffer_size: 2
+  timeout_ms: 3000
+
+preprocess:
+  input_size: [416, 416]  # Smaller input = faster inference
+  normalize_mean: [0.485, 0.456, 0.406]
+  normalize_std: [0.229, 0.224, 0.225]
+  pixel_format: RGB
+
+detector:
+  model_path: models/yolo11n.pt  # Nano model = fastest
+  model_type: yolo
+  confidence_threshold: 0.4  # Slightly lower for speed
+  nms_threshold: 0.5
+  max_detections: 50
+  device: cuda
+
+embedder:
+  enabled: false  # Disable for maximum speed
+  model_path: null
+  embedding_dim: 128
+  input_size: [64, 64]
+  device: cuda
+
+tracking:
+  lock_confirm_frames: 2
+  lock_timeout_frames: 3
+  lost_timeout_frames: 15
+  recover_max_frames: 10
+  recover_confirm_frames: 2
+  process_noise: 2.0
+  measurement_noise: 0.5
+  iou_threshold: 0.25
+  embedding_weight: 0.0  # No embedding
+  gate_threshold: 0.1
+  trajectory_max_length: 50
+  trajectory_output_points: 5
+
+output:
+  sink_type: stub
+  output_path: null
+  output_frequency: every_frame
+  pretty_print: false
+
+logging:
+  level: WARNING  # Minimal logging
+  format: json
+  log_file: null
+  log_stage_timings: false
+  log_track_changes: false
