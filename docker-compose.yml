@@ -1,0 +1,219 @@
+# Hunter Drone Detection & Tracking System
+# Docker Compose configuration with GPU support
+#
+# Usage:
+#   Production:  docker-compose up hunter-prod
+#   Development: docker-compose up hunter-dev
+#   Training:    docker-compose up hunter-train
+#   All tests:   docker-compose run hunter-dev pytest tests/ -v
+
+version: "3.8"
+
+# ============================================
+# Shared configuration
+# ============================================
+x-common-settings: &common-settings
+  restart: unless-stopped
+  networks:
+    - hunter-network
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "100m"
+      max-file: "3"
+
+x-gpu-settings: &gpu-settings
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+x-common-volumes: &common-volumes
+  - ./data:/app/data:rw
+  - ./models:/app/models:rw
+  - ./configs:/app/configs:ro
+  - ./outputs:/app/outputs:rw
+  - ./logs:/app/logs:rw
+
+# ============================================
+# Services
+# ============================================
+services:
+  # ------------------------------------------
+  # Production service
+  # ------------------------------------------
+  hunter-prod:
+    <<: *common-settings
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: hunter-drone:prod
+    container_name: hunter-prod
+    <<: *gpu-settings
+    volumes: *common-volumes
+    environment:
+      - HUNTER_CONFIG_PATH=/app/configs/default.yaml
+      - HUNTER_LOG_LEVEL=INFO
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+    ports:
+      - "8080:8080"
+    command: ["hunter-run", "--config", "/app/configs/default.yaml"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from hunter import Pipeline; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ------------------------------------------
+  # Development service
+  # ------------------------------------------
+  hunter-dev:
+    <<: *common-settings
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    image: hunter-drone:dev
+    container_name: hunter-dev
+    <<: *gpu-settings
+    volumes:
+      - ./src:/app/src:rw
+      - ./tests:/app/tests:rw
+      - ./data:/app/data:rw
+      - ./models:/app/models:rw
+      - ./configs:/app/configs:rw
+      - ./outputs:/app/outputs:rw
+      - ./logs:/app/logs:rw
+      - ./scripts:/app/scripts:rw
+    environment:
+      - HUNTER_CONFIG_PATH=/app/configs/default.yaml
+      - HUNTER_LOG_LEVEL=DEBUG
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONDONTWRITEBYTECODE=1
+    ports:
+      - "8080:8080"
+      - "5678:5678"  # Debug port
+    stdin_open: true
+    tty: true
+    command: ["/bin/bash"]
+
+  # ------------------------------------------
+  # Training service
+  # ------------------------------------------
+  hunter-train:
+    <<: *common-settings
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: training
+    image: hunter-drone:train
+    container_name: hunter-train
+    <<: *gpu-settings
+    volumes:
+      - ./src:/app/src:rw
+      - ./data:/app/data:rw
+      - ./models:/app/models:rw
+      - ./configs:/app/configs:rw
+      - ./experiments:/app/experiments:rw
+      - ./logs:/app/logs:rw
+      - ./scripts:/app/scripts:rw
+    environment:
+      - HUNTER_CONFIG_PATH=/app/configs/default.yaml
+      - HUNTER_LOG_LEVEL=INFO
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - WANDB_MODE=offline
+    ports:
+      - "6006:6006"  # TensorBoard
+    depends_on:
+      - mlflow
+    command: ["python", "scripts/train.py"]
+
+  # ------------------------------------------
+  # MLflow tracking server
+  # ------------------------------------------
+  mlflow:
+    <<: *common-settings
+    image: ghcr.io/mlflow/mlflow:v2.8.0
+    container_name: hunter-mlflow
+    volumes:
+      - ./experiments/mlflow:/mlflow:rw
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=sqlite:///mlflow/mlflow.db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+
+  # ------------------------------------------
+  # TensorBoard service
+  # ------------------------------------------
+  tensorboard:
+    <<: *common-settings
+    image: tensorflow/tensorflow:2.14.0
+    container_name: hunter-tensorboard
+    volumes:
+      - ./experiments/tensorboard:/logs:ro
+    ports:
+      - "6007:6006"
+    command: ["tensorboard", "--logdir=/logs", "--host=0.0.0.0", "--port=6006"]
+
+  # ------------------------------------------
+  # Test runner service
+  # ------------------------------------------
+  hunter-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    image: hunter-drone:test
+    container_name: hunter-test
+    <<: *gpu-settings
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./configs:/app/configs:ro
+      - ./test-results:/app/test-results:rw
+    environment:
+      - HUNTER_LOG_LEVEL=WARNING
+      - CUDA_VISIBLE_DEVICES=0
+    command: >
+      pytest tests/
+      -v
+      --tb=short
+      --cov=hunter
+      --cov-report=html:/app/test-results/coverage
+      --cov-report=xml:/app/test-results/coverage.xml
+      --junitxml=/app/test-results/junit.xml
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  hunter-network:
+    driver: bridge
+    name: hunter-network
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  hunter-data:
+    name: hunter-data
+  hunter-models:
+    name: hunter-models
+  hunter-experiments:
+    name: hunter-experiments

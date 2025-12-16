@@ -1,0 +1,10 @@
+# Detection training data
+# Place your drone detection datasets here
+# Expected structure:
+#   images/
+#     train/
+#     val/
+#   labels/
+#     train/
+#     val/
+#   drone_dataset.yaml

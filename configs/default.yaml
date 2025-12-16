@@ -1,70 +1,288 @@
 # Hunter Drone Detection & Tracking System
-# Default Configuration
+# Default Configuration with Hybrid Detector Architecture
+#
+# Architecture Overview:
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │                        HYBRID DETECTION PIPELINE                        │
+# │                                                                         │
+# │  Frame → YOLO11 (Primary) ──┬── High Conf ──→ Track Directly           │
+# │                             │                                           │
+# │                             ├── Medium Conf → Siamese Verify ──→ Track │
+# │                             │                                           │
+# │                             └── Low Conf ──→ Discard                   │
+# └─────────────────────────────────────────────────────────────────────────┘
 
-# Video input settings
+# ============================================
+# System Configuration
+# ============================================
+system:
+  name: "hunter-drone"
+  version: "1.0.0"
+  environment: "production"  # development, production, testing
+  debug: false
+  seed: 42
+
+# ============================================
+# Video Ingest Configuration
+# ============================================
 ingest:
-  source_type: file  # file, rtsp, stub
-  source_uri: ""  # Path to video file or RTSP URL
+  source_type: "file"  # file, rtsp, gstreamer, stub
+  source_uri: ""
+
+  # Buffer configuration
   buffer_size: 5
+  buffer_strategy: "drop_oldest"  # drop_oldest, block
   timeout_ms: 5000
 
-# Image preprocessing
+  # Frame rate control
+  target_fps: 30.0
+  skip_frames: 0  # Skip N frames between processing
+
+  # Decode settings
+  decode_threads: 2
+  hw_decode: true  # Use hardware decoding if available
+
+# ============================================
+# Preprocessing Configuration
+# ============================================
 preprocess:
   input_size: [640, 640]  # [width, height]
+
+  # Normalization (ImageNet defaults)
   normalize_mean: [0.485, 0.456, 0.406]
   normalize_std: [0.229, 0.224, 0.225]
-  pixel_format: RGB
 
-# YOLO11 detector settings
+  pixel_format: "RGB"  # RGB, BGR
+
+  # Augmentation (inference-time)
+  letterbox: true
+  letterbox_color: [114, 114, 114]
+
+# ============================================
+# Hybrid Detector Configuration
+# ============================================
 detector:
-  model_path: models/yolo11m.pt  # yolo11n, yolo11s, yolo11m, yolo11l, yolo11x
-  model_type: yolo
-  confidence_threshold: 0.5
-  nms_threshold: 0.45
-  max_detections: 100
-  device: cuda  # cuda, cpu, mps
+  # Primary detector: YOLO11
+  primary:
+    type: "yolo11"
+    model_path: "models/yolo11m.pt"
+    model_format: "pytorch"  # pytorch, onnx, tensorrt
 
-# Siamese embedder settings
+    # Inference settings
+    confidence_threshold: 0.25  # Low threshold, let hybrid routing filter
+    nms_threshold: 0.45
+    max_detections: 100
+
+    # Classes to detect
+    classes: [0]  # 0 = drone (custom trained)
+
+    # Device settings
+    device: "cuda:0"  # cuda:0, cuda:1, cpu, mps
+    half_precision: true  # FP16 for faster inference
+
+    # Batch settings
+    batch_size: 1
+
+  # Secondary verifier: Siamese Network
+  secondary:
+    type: "siamese"
+    enabled: true
+    model_path: "models/siamese_verifier.onnx"
+    model_format: "onnx"
+
+    # Embedding settings
+    embedding_dim: 256
+    input_size: [128, 128]
+
+    # Device settings
+    device: "cuda:0"
+    half_precision: false
+
+    # Verification threshold
+    similarity_threshold: 0.7
+
+  # Hybrid routing configuration
+  routing:
+    enabled: true
+
+    # Confidence thresholds for routing decisions
+    high_confidence_threshold: 0.8    # Direct to tracking
+    medium_confidence_threshold: 0.5  # Verify with Siamese
+    low_confidence_threshold: 0.25    # Discard
+
+    # Siamese verification settings
+    verify_with_siamese: true
+    siamese_crop_padding: 0.1  # Padding around bbox for crop
+
+    # Reference gallery for verification
+    use_reference_gallery: true
+    gallery_size: 100
+    gallery_update_interval: 30  # frames
+
+# ============================================
+# Embedding Configuration (for Re-ID)
+# ============================================
 embedder:
   enabled: true
-  model_path: models/embedder.onnx
+  type: "siamese"
+  model_path: "models/siamese_reid.onnx"
+  model_format: "onnx"
+
+  # Embedding settings
   embedding_dim: 128
   input_size: [128, 128]
-  device: cuda
 
-# Tracking settings
+  # Device
+  device: "cuda:0"
+  half_precision: false
+
+  # Batch processing
+  batch_size: 8
+
+# ============================================
+# Tracking Configuration
+# ============================================
 tracking:
-  # State machine (Eagle Model)
-  lock_confirm_frames: 3      # Frames to confirm LOCK → TRACK
-  lock_timeout_frames: 5      # Max frames in LOCK before DROP
-  lost_timeout_frames: 30     # Frames before TRACK → LOST
-  recover_max_frames: 15      # Max frames to attempt recovery
-  recover_confirm_frames: 2   # Frames to confirm RECOVER → TRACK
+  # State Machine (Eagle Model)
+  state_machine:
+    lock_confirm_frames: 3      # Frames to confirm SEARCH → LOCK → TRACK
+    lock_timeout_frames: 5      # Max frames in LOCK before DROP
+    lost_timeout_frames: 30     # Frames before TRACK → LOST
+    recover_max_frames: 15      # Max frames to attempt RECOVER
+    recover_confirm_frames: 2   # Frames to confirm RECOVER → TRACK
 
-  # Kalman filter
-  process_noise: 1.0
-  measurement_noise: 1.0
+  # Kalman Filter (filterpy)
+  kalman:
+    process_noise: 1.0
+    measurement_noise: 1.0
+    dt: 0.033  # 1/30 fps
 
-  # Association (Hungarian algorithm)
-  iou_threshold: 0.3
-  embedding_weight: 0.3  # 0 = IoU only, 1 = embedding only
-  gate_threshold: 0.1    # Minimum IoU to consider
+    # State model: constant velocity
+    # State: [cx, cy, w, h, vx, vy, vw, vh]
+    use_velocity: true
+    velocity_decay: 0.99
+
+  # Association (Hungarian Algorithm)
+  association:
+    algorithm: "hungarian"  # hungarian, greedy
+
+    # Cost matrix weights
+    iou_weight: 0.5
+    embedding_weight: 0.3
+    motion_weight: 0.2
+
+    # Thresholds
+    iou_threshold: 0.3
+    embedding_threshold: 0.5
+    gate_threshold: 0.1  # Minimum IoU to consider
+    max_distance: 150.0  # Maximum pixel distance
 
   # Trajectory
-  trajectory_max_length: 150
-  trajectory_output_points: 10
+  trajectory:
+    max_length: 150  # Max points to store
+    output_points: 10  # Points to include in output
+    smoothing: true
+    smoothing_window: 5
 
-# Output settings
+# ============================================
+# Output Configuration
+# ============================================
 output:
-  sink_type: stub  # stub, json, udp
-  output_path: null  # Path for file output
-  output_frequency: every_frame  # every_frame, on_change
+  sink_type: "json"  # json, stub, udp, kafka
+
+  # File output
+  output_path: "outputs/tracks.jsonl"
+  output_frequency: "every_frame"  # every_frame, on_change
   pretty_print: false
 
-# Logging settings
+  # UDP output (for real-time streaming)
+  udp:
+    enabled: false
+    host: "127.0.0.1"
+    port: 9000
+
+  # Include in output
+  include_trajectory: true
+  include_embeddings: false
+  include_metrics: true
+
+# ============================================
+# Logging Configuration
+# ============================================
 logging:
-  level: INFO  # DEBUG, INFO, WARNING, ERROR
-  format: json  # json, console
-  log_file: null  # Path for log file
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "json"  # json, console
+
+  # File logging
+  log_file: "logs/hunter.log"
+  log_rotation: true
+  max_log_size_mb: 100
+  backup_count: 5
+
+  # What to log
   log_stage_timings: true
   log_track_changes: true
+  log_detections: false
+  log_associations: false
+
+# ============================================
+# Metrics Configuration
+# ============================================
+metrics:
+  enabled: true
+
+  # Latency tracking
+  latency_window_size: 1000
+
+  # Export settings
+  export_prometheus: false
+  prometheus_port: 9090
+
+  # Performance targets (for alerting)
+  targets:
+    latency_p95_ms: 120
+    throughput_fps: 25
+    detection_f1: 0.95
+    id_switch_rate: 0.05
+
+# ============================================
+# Performance Configuration
+# ============================================
+performance:
+  # Threading
+  num_workers: 4
+  prefetch_frames: 2
+
+  # GPU optimization
+  cuda_streams: 2
+  tensorrt_cache: true
+
+  # Memory management
+  max_memory_mb: 4096
+  clear_cache_interval: 100  # frames
+
+# ============================================
+# Profiles (can override above settings)
+# ============================================
+profiles:
+  low_latency:
+    detector:
+      primary:
+        model_path: "models/yolo11n.pt"
+        half_precision: true
+    tracking:
+      kalman:
+        dt: 0.02  # 50 fps target
+
+  high_accuracy:
+    detector:
+      primary:
+        model_path: "models/yolo11x.pt"
+        confidence_threshold: 0.4
+      routing:
+        high_confidence_threshold: 0.9
+        medium_confidence_threshold: 0.6
+    tracking:
+      state_machine:
+        lock_confirm_frames: 5
+        lost_timeout_frames: 45

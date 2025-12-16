@@ -1,0 +1,11 @@
+# Siamese network training data
+# Place your verification/re-id datasets here
+# Expected structure:
+#   train/
+#     class_001/
+#       img_001.jpg
+#       img_002.jpg
+#     class_002/
+#       ...
+#   val/
+#     ...
