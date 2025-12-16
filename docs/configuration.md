@@ -526,8 +526,6 @@ Common validation errors:
 - `model_path` must have valid extension (.pt, .onnx, .engine)
 - `input_size` must be at least 32x32
 
-## Next Steps
+## Diger Dokumanlar
 
-- [User Guide](user-guide.md) - Running detection
-- [Training Guide](training.md) - Training custom models
-- [API Reference](api-reference.md) - Full API documentation
+- [API Reference](api-reference.md) - Python API referansi

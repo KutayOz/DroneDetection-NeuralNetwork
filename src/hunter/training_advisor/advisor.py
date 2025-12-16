@@ -4,8 +4,16 @@ Main TrainingAdvisor class.
 High-level interface for training analysis and recommendations.
 """
 
+import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
+
+# Load .env file for API keys
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from .config import AdvisorConfig
 from .collectors import get_collector, BaseCollector
@@ -13,6 +21,7 @@ from .analyzers import get_all_analyzers, BaseAnalyzer
 from .engine import DecisionEngine, RecommendationEngine, ActionRegistry
 from .reporters import get_reporter, BaseReporter
 from .tuner import AutoTuner
+from .llm import OpenAIProvider, StubLLMProvider
 from .domain.metrics import TrainingMetrics
 from .domain.issues import Issue
 from .domain.recommendations import Recommendation
@@ -66,6 +75,9 @@ class TrainingAdvisor:
             backup_dir=self._config.auto_tune.backup_dir,
             safe_only=self._config.auto_tune.safe_only,
         )
+
+        # Initialize LLM provider
+        self._llm_provider = self._init_llm_provider()
 
     @property
     def config(self) -> AdvisorConfig:
@@ -233,6 +245,11 @@ class TrainingAdvisor:
         console_report = self.generate_report(issues, recommendations, format="console")
         markdown_report = self.generate_report(issues, recommendations, format="markdown")
 
+        # Get LLM analysis if enabled
+        llm_analysis = None
+        if self._config.llm.enabled:
+            llm_analysis = self.llm_analyze(metrics, issues)
+
         result = {
             "metrics": metrics,
             "issues": issues,
@@ -241,6 +258,7 @@ class TrainingAdvisor:
                 "console": console_report,
                 "markdown": markdown_report,
             },
+            "llm_analysis": llm_analysis,
             "auto_tune_results": None,
         }
 
@@ -284,3 +302,40 @@ class TrainingAdvisor:
             return "csv"
 
         return self._config.collectors.default_source
+
+    def _init_llm_provider(self):
+        """Initialize LLM provider based on configuration."""
+        if not self._config.llm.enabled:
+            return StubLLMProvider()
+
+        provider = self._config.llm.provider.lower()
+        api_key = os.getenv(self._config.llm.api_key_env)
+
+        if provider == "openai":
+            return OpenAIProvider(
+                api_key=api_key,
+                model=self._config.llm.model,
+                max_tokens=self._config.llm.max_tokens,
+                temperature=self._config.llm.temperature,
+            )
+        else:
+            return StubLLMProvider()
+
+    def llm_analyze(
+        self,
+        metrics: TrainingMetrics,
+        issues: List[Issue],
+        context: Optional[str] = None,
+    ) -> str:
+        """
+        Get LLM-based analysis of training results.
+
+        Args:
+            metrics: Training metrics
+            issues: Detected issues
+            context: Additional context
+
+        Returns:
+            LLM analysis as string
+        """
+        return self._llm_provider.analyze(metrics, issues, context)

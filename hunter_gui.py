@@ -56,6 +56,7 @@ class HunterGUI:
         self._create_dataset_tab()
         self._create_training_tab()
         self._create_inference_tab()
+        self._create_evaluate_tab()
         self._create_settings_tab()
 
         # Status bar
@@ -749,6 +750,303 @@ names:
             self.inf_btn.config(state=tk.NORMAL)
             self.stop_inf_btn.config(state=tk.DISABLED)
 
+    # ==================== EVALUATE TAB ====================
+
+    def _create_evaluate_tab(self):
+        """Egitim sonucu analiz tabi."""
+        tab = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(tab, text="  Sonuc Analizi  ")
+
+        # Ust panel - Klasor secimi
+        top_frame = ttk.Frame(tab)
+        top_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Sonuc klasoru
+        folder_frame = ttk.LabelFrame(top_frame, text="Egitim Sonuc Klasoru", padding="10")
+        folder_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(
+            folder_frame,
+            text="YOLO egitim sonuclarinin bulundugu klasoru secin (runs/detect/exp gibi):",
+            font=("Helvetica", 9),
+            foreground="gray",
+        ).pack(anchor=tk.W, pady=(0, 5))
+
+        path_frame = ttk.Frame(folder_frame)
+        path_frame.pack(fill=tk.X)
+
+        self.eval_path_var = tk.StringVar(value=str(PROJECT_ROOT / "runs" / "detect"))
+        ttk.Entry(path_frame, textvariable=self.eval_path_var, width=60).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10)
+        )
+        ttk.Button(path_frame, text="Gozat...", command=self._browse_eval_folder).pack(
+            side=tk.RIGHT
+        )
+
+        # Butonlar
+        btn_frame = ttk.Frame(top_frame)
+        btn_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.eval_btn = ttk.Button(
+            btn_frame,
+            text="Analizi Baslat (AI Destekli)",
+            command=self._start_evaluation,
+            style="Primary.TButton",
+        )
+        self.eval_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.eval_quick_btn = ttk.Button(
+            btn_frame,
+            text="Hizli Analiz (LLM'siz)",
+            command=self._start_quick_evaluation,
+        )
+        self.eval_quick_btn.pack(side=tk.LEFT)
+
+        # Bilgi etiketi
+        info_label = ttk.Label(
+            btn_frame,
+            text="AI Destekli: GPT-4o-mini ile detayli analiz  |  Hizli: Sadece kural tabanli analiz",
+            font=("Helvetica", 8),
+            foreground="gray",
+        )
+        info_label.pack(side=tk.RIGHT)
+
+        # Sonuc alani
+        result_frame = ttk.LabelFrame(tab, text="Analiz Sonuclari", padding="10")
+        result_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.eval_result_text = scrolledtext.ScrolledText(
+            result_frame, height=25, font=("Consolas", 10), wrap=tk.WORD
+        )
+        self.eval_result_text.pack(fill=tk.BOTH, expand=True)
+
+        # Tag'ler (renklendirme icin)
+        self.eval_result_text.tag_configure("header", font=("Consolas", 11, "bold"))
+        self.eval_result_text.tag_configure("success", foreground="#4CAF50")
+        self.eval_result_text.tag_configure("warning", foreground="#FF9800")
+        self.eval_result_text.tag_configure("error", foreground="#f44336")
+        self.eval_result_text.tag_configure("info", foreground="#2196F3")
+
+    def _browse_eval_folder(self):
+        """Analiz klasoru sec."""
+        initial_dir = PROJECT_ROOT / "runs" / "detect"
+        if not initial_dir.exists():
+            initial_dir = PROJECT_ROOT
+
+        path = filedialog.askdirectory(
+            initialdir=initial_dir,
+            title="Egitim Sonuc Klasorunu Sec",
+        )
+        if path:
+            self.eval_path_var.set(path)
+
+    def _start_evaluation(self):
+        """AI destekli analizi baslat."""
+        self._run_evaluation(use_llm=True)
+
+    def _start_quick_evaluation(self):
+        """Hizli analizi baslat (LLM'siz)."""
+        self._run_evaluation(use_llm=False)
+
+    def _run_evaluation(self, use_llm: bool = True):
+        """Analizi calistir."""
+        eval_path = Path(self.eval_path_var.get())
+
+        # Temizle
+        self.eval_result_text.delete(1.0, tk.END)
+
+        # Kontrol
+        if not eval_path.exists():
+            self._log_eval("[HATA] Klasor bulunamadi!\n", "error")
+            return
+
+        # results.csv kontrolu
+        results_csv = eval_path / "results.csv"
+        if not results_csv.exists():
+            # Alt klasorlerde ara
+            possible_paths = list(eval_path.glob("**/results.csv"))
+            if possible_paths:
+                results_csv = possible_paths[0]
+                eval_path = results_csv.parent
+                self._log_eval(f"[INFO] results.csv bulundu: {results_csv}\n\n", "info")
+            else:
+                self._log_eval(
+                    "[HATA] results.csv bulunamadi!\n"
+                    "Lutfen YOLO egitim sonuc klasorunu secin (runs/detect/exp gibi)\n",
+                    "error"
+                )
+                return
+
+        self.eval_btn.config(state=tk.DISABLED)
+        self.eval_quick_btn.config(state=tk.DISABLED)
+        self.status_var.set("Analiz yapiliyor...")
+
+        # Thread'de calistir
+        thread = threading.Thread(
+            target=self._do_evaluation,
+            args=(str(eval_path), use_llm),
+            daemon=True
+        )
+        thread.start()
+
+    def _do_evaluation(self, eval_path: str, use_llm: bool):
+        """Analizi ayri thread'de yap."""
+        try:
+            self.root.after(0, self._log_eval, "=" * 60 + "\n", None)
+            self.root.after(0, self._log_eval, "EGITIM SONUC ANALIZI\n", "header")
+            self.root.after(0, self._log_eval, "=" * 60 + "\n\n", None)
+
+            # dotenv yukle
+            try:
+                from dotenv import load_dotenv
+                load_dotenv()
+            except ImportError:
+                pass
+
+            # Training Advisor import
+            from hunter.training_advisor import TrainingAdvisor
+            from hunter.training_advisor.config import AdvisorConfig, LLMConfig
+
+            # Config olustur
+            config = AdvisorConfig()
+            config.llm.enabled = use_llm
+
+            advisor = TrainingAdvisor(config=config)
+
+            # Metrikleri topla
+            self.root.after(0, self._log_eval, "[1/4] Metrikler toplanıyor...\n", "info")
+            metrics = advisor.collect(eval_path)
+
+            # Sorunlari tespit et
+            self.root.after(0, self._log_eval, "[2/4] Sorunlar analiz ediliyor...\n", "info")
+            issues = advisor.detect_issues(metrics)
+
+            # Oneriler olustur
+            self.root.after(0, self._log_eval, "[3/4] Oneriler olusturuluyor...\n", "info")
+            recommendations = advisor.recommend(issues)
+
+            # Rapor olustur
+            self.root.after(0, self._log_eval, "[4/4] Rapor hazirlaniyor...\n\n", "info")
+
+            # Metrik ozeti
+            self.root.after(0, self._log_eval, "-" * 40 + "\n", None)
+            self.root.after(0, self._log_eval, "METRIK OZETI\n", "header")
+            self.root.after(0, self._log_eval, "-" * 40 + "\n", None)
+
+            if metrics.epochs:
+                first = metrics.epochs[0]
+                last = metrics.epochs[-1]
+                best = metrics.best_epoch
+
+                self.root.after(0, self._log_eval, f"Toplam Epoch: {len(metrics.epochs)}\n", None)
+                self.root.after(0, self._log_eval, f"Baslangic Train Loss: {first.train_loss:.4f}\n", None)
+                self.root.after(0, self._log_eval, f"Son Train Loss: {last.train_loss:.4f}\n", None)
+                self.root.after(0, self._log_eval, f"Son Val Loss: {last.val_loss:.4f}\n", None)
+
+                if last.map50 is not None:
+                    self.root.after(0, self._log_eval, f"Son mAP@50: {last.map50:.4f}\n", None)
+                if last.precision is not None:
+                    self.root.after(0, self._log_eval, f"Son Precision: {last.precision:.4f}\n", None)
+                if last.recall is not None:
+                    self.root.after(0, self._log_eval, f"Son Recall: {last.recall:.4f}\n", None)
+
+                if best:
+                    self.root.after(0, self._log_eval, f"\nEn Iyi Epoch: {best.epoch} (Val Loss: {best.val_loss:.4f})\n", "success")
+
+            self.root.after(0, self._log_eval, "\n", None)
+
+            # Tespit edilen sorunlar
+            self.root.after(0, self._log_eval, "-" * 40 + "\n", None)
+            self.root.after(0, self._log_eval, "TESPIT EDILEN SORUNLAR\n", "header")
+            self.root.after(0, self._log_eval, "-" * 40 + "\n", None)
+
+            if issues:
+                for issue in issues:
+                    severity_tag = {
+                        "CRITICAL": "error",
+                        "HIGH": "error",
+                        "MEDIUM": "warning",
+                        "LOW": "info",
+                    }.get(issue.severity.name, None)
+
+                    self.root.after(
+                        0,
+                        self._log_eval,
+                        f"[{issue.severity.name}] {issue.issue_type.name}\n",
+                        severity_tag
+                    )
+                    self.root.after(0, self._log_eval, f"   {issue.message}\n", None)
+                    if issue.epoch_detected:
+                        self.root.after(0, self._log_eval, f"   Tespit edildi: Epoch {issue.epoch_detected}\n", None)
+                    self.root.after(0, self._log_eval, "\n", None)
+            else:
+                self.root.after(0, self._log_eval, "Sorun tespit edilmedi! Egitim basarili gorunuyor.\n\n", "success")
+
+            # Oneriler
+            self.root.after(0, self._log_eval, "-" * 40 + "\n", None)
+            self.root.after(0, self._log_eval, "ONERILER\n", "header")
+            self.root.after(0, self._log_eval, "-" * 40 + "\n", None)
+
+            if recommendations:
+                for i, rec in enumerate(recommendations, 1):
+                    self.root.after(0, self._log_eval, f"{i}. {rec.message}\n", None)
+                    if rec.parameters:
+                        for key, val in rec.parameters.items():
+                            self.root.after(0, self._log_eval, f"   -> {key}: {val}\n", "info")
+                    self.root.after(0, self._log_eval, "\n", None)
+            else:
+                self.root.after(0, self._log_eval, "Oneri yok - egitim iyi gorunuyor!\n\n", "success")
+
+            # LLM Analizi
+            if use_llm:
+                self.root.after(0, self._log_eval, "-" * 40 + "\n", None)
+                self.root.after(0, self._log_eval, "AI ANALIZI (GPT-4o-mini)\n", "header")
+                self.root.after(0, self._log_eval, "-" * 40 + "\n", None)
+
+                import os
+                if os.getenv("OPENAI_API_KEY"):
+                    self.root.after(0, self._log_eval, "Analiz isteniyor...\n\n", "info")
+                    llm_result = advisor.llm_analyze(metrics, issues)
+                    self.root.after(0, self._log_eval, llm_result + "\n", None)
+                else:
+                    self.root.after(
+                        0,
+                        self._log_eval,
+                        "[UYARI] OPENAI_API_KEY bulunamadi!\n"
+                        ".env dosyasina API key'inizi ekleyin.\n",
+                        "warning"
+                    )
+
+            self.root.after(0, self._log_eval, "\n" + "=" * 60 + "\n", None)
+            self.root.after(0, self._log_eval, "ANALIZ TAMAMLANDI\n", "success")
+            self.root.after(0, self._log_eval, "=" * 60 + "\n", None)
+
+            self.root.after(0, self._evaluation_complete, True)
+
+        except Exception as e:
+            import traceback
+            self.root.after(0, self._log_eval, f"\n[HATA] {str(e)}\n", "error")
+            self.root.after(0, self._log_eval, f"{traceback.format_exc()}\n", None)
+            self.root.after(0, self._evaluation_complete, False)
+
+    def _log_eval(self, text: str, tag: str = None):
+        """Analiz loguna yaz."""
+        if tag:
+            self.eval_result_text.insert(tk.END, text, tag)
+        else:
+            self.eval_result_text.insert(tk.END, text)
+        self.eval_result_text.see(tk.END)
+
+    def _evaluation_complete(self, success: bool):
+        """Analiz tamamlandi."""
+        self.eval_btn.config(state=tk.NORMAL)
+        self.eval_quick_btn.config(state=tk.NORMAL)
+
+        if success:
+            self.status_var.set("Analiz tamamlandi!")
+        else:
+            self.status_var.set("Analiz hatasi!")
+
     # ==================== SETTINGS TAB ====================
 
     def _create_settings_tab(self):
@@ -828,8 +1126,7 @@ Kullanim:
 1. Dataset tabinda dataset'inizi dogrulayin
 2. Egitim tabinda model egitimini yapin
 3. Inference tabinda video uzerinde tespit yapin
-
-Dokumantasyon icin STARTING_GUIDE.md dosyasina bakin.
+4. Sonuc Analizi tabinda AI destekli egitim analizi yapin
         """
         ttk.Label(help_frame, text=help_text.strip(), justify=tk.LEFT).pack(anchor=tk.W)
 

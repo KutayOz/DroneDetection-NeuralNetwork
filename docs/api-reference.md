@@ -800,8 +800,6 @@ def bbox_center(bbox: List[float]) -> Tuple[float, float]:
     """
 ```
 
-## Next Steps
+## Diger Dokumanlar
 
-- [User Guide](user-guide.md) - Running detection
-- [Training Guide](training.md) - Training custom models
-- [Configuration Reference](configuration.md) - All configuration options
+- [Configuration Reference](configuration.md) - Tum konfigurasyon seçenekleri

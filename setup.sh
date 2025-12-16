@@ -1,7 +1,9 @@
 #!/bin/bash
 # ============================================
-# Hunter Drone - Mac/Linux Kurulum Script
+# Hunter Drone - Tek Tikla Kurulum (Mac/Linux)
 # ============================================
+# Terminal'de: ./setup.sh
+# Her sey otomatik!
 
 set -e
 
@@ -10,111 +12,88 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-echo ""
-echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}   Hunter Drone - Otomatik Kurulum${NC}"
-echo -e "${BLUE}============================================${NC}"
-echo ""
-
-# Proje dizinine git
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 
-# Python komutunu belirle
+echo ""
+echo -e "${BLUE}============================================${NC}"
+echo -e "${BLUE}   HUNTER DRONE - OTOMATIK KURULUM${NC}"
+echo -e "${BLUE}============================================${NC}"
+echo ""
+echo "   Her sey otomatik yukleniyor..."
+echo "   Lutfen bekleyin."
+echo ""
+
+# === PYTHON KONTROLU ===
+echo -e "${GREEN}[1/5]${NC} Python kontrol ediliyor..."
+
 if command -v python3 &> /dev/null; then
     PYTHON_CMD="python3"
 elif command -v python &> /dev/null; then
     PYTHON_CMD="python"
 else
+    echo ""
     echo -e "${RED}[HATA] Python bulunamadi!${NC}"
-    echo "Python 3.10+ yukleyin: https://www.python.org/downloads/"
+    echo ""
+    echo "Mac: brew install python@3.10"
+    echo "Ubuntu: sudo apt install python3.10 python3.10-venv"
+    echo ""
     exit 1
 fi
 
-echo -e "${GREEN}[1/6]${NC} Python kontrolu yapiliyor..."
+$PYTHON_CMD -c "import sys; exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null || {
+    echo -e "${RED}[HATA] Python 3.10 veya uzeri gerekli!${NC}"
+    exit 1
+}
+
 PYTHON_VERSION=$($PYTHON_CMD --version 2>&1 | cut -d' ' -f2)
 echo "       Python $PYTHON_VERSION bulundu."
 
-# Python versiyon kontrolü
-$PYTHON_CMD -c "import sys; exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null
-if [ $? -ne 0 ]; then
-    echo -e "${RED}[HATA] Python 3.10 veya uzeri gerekli!${NC}"
-    exit 1
-fi
-
+# === VIRTUAL ENVIRONMENT ===
 echo ""
-echo -e "${GREEN}[2/6]${NC} Virtual environment olusturuluyor..."
-if [ -d "venv" ]; then
-    echo "       Mevcut venv bulundu, siliniyor..."
-    rm -rf venv
-fi
+echo -e "${GREEN}[2/5]${NC} Ortam hazirlaniyor..."
+[ -d "venv" ] && rm -rf venv
 $PYTHON_CMD -m venv venv
-echo "       venv olusturuldu."
-
-echo ""
-echo -e "${GREEN}[3/6]${NC} Virtual environment aktif ediliyor..."
 source venv/bin/activate
-echo "       venv aktif edildi."
-
-echo ""
-echo -e "${GREEN}[4/6]${NC} pip guncelleniyor..."
 pip install --upgrade pip > /dev/null 2>&1
-echo "       pip guncellendi."
 
+# === BAGIMLILIKLAR ===
 echo ""
-echo -e "${GREEN}[5/6]${NC} Bagimliliklar yukleniyor..."
+echo -e "${GREEN}[3/5]${NC} Kutuphaneler yukleniyor (bu biraz zaman alabilir)..."
+pip install -e ".[dev,training]" > /dev/null 2>&1 || pip install -e .
+
+# === MODEL INDIRME ===
 echo ""
-echo "   Hangi kurulum turunu istiyorsunuz?"
-echo "   [1] Temel kurulum (sadece inference)"
-echo "   [2] Gelistirici kurulumu (test + lint)"
-echo "   [3] Egitim kurulumu (tensorboard + mlflow)"
-echo "   [4] Tam kurulum (tum bagimlilklar)"
-echo ""
-read -p "Seciminiz (1-4): " INSTALL_TYPE
+echo -e "${GREEN}[4/5]${NC} YOLO11 modeli indiriliyor..."
+mkdir -p models
 
-case $INSTALL_TYPE in
-    1)
-        echo ""
-        echo "       Temel kurulum yapiliyor..."
-        pip install -e .
-        ;;
-    2)
-        echo ""
-        echo "       Gelistirici kurulumu yapiliyor..."
-        pip install -e ".[dev]"
-        ;;
-    3)
-        echo ""
-        echo "       Egitim kurulumu yapiliyor..."
-        pip install -e ".[training]"
-        ;;
-    4)
-        echo ""
-        echo "       Tam kurulum yapiliyor..."
-        pip install -e ".[dev,training]"
-        ;;
-    *)
-        echo ""
-        echo "       Varsayilan: Temel kurulum yapiliyor..."
-        pip install -e .
-        ;;
-esac
+if [ ! -f "models/yolo11m.pt" ]; then
+    python -c "from ultralytics import YOLO; YOLO('yolo11m.pt')" > /dev/null 2>&1 || true
+    [ -f "yolo11m.pt" ] && mv yolo11m.pt models/
+fi
 
-echo "       Bagimliliklari yuklendi."
-
-echo ""
-echo -e "${GREEN}[6/6]${NC} Kurulum dogrulaniyor..."
-python -c "from hunter import Pipeline, HunterConfig; print('       Import testi: BASARILI')" 2>/dev/null || echo -e "${YELLOW}       [UYARI] Import testi basarisiz${NC}"
-
-# GPU kontrolü (macOS için MPS, Linux için CUDA)
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS - MPS kontrolü
-    python -c "import torch; mps=torch.backends.mps.is_available(); print(f'       MPS (Apple Silicon): {\"Aktif\" if mps else \"Pasif\"}')" 2>/dev/null || true
+if [ -f "models/yolo11m.pt" ]; then
+    echo "       Model hazir: models/yolo11m.pt"
 else
-    # Linux - CUDA kontrolü
-    python -c "import torch; cuda=torch.cuda.is_available(); print(f'       CUDA: {\"Aktif\" if cuda else \"Pasif\"}')" 2>/dev/null || true
+    echo -e "${YELLOW}       [UYARI] Model indirilemedi, GUI'den indirebilirsiniz.${NC}"
+fi
+
+# === KLASORLER ===
+echo ""
+echo -e "${GREEN}[5/5]${NC} Klasorler hazirlaniyor..."
+mkdir -p database/images/train database/images/val
+mkdir -p database/labels/train database/labels/val
+mkdir -p output
+
+# === GPU KONTROLU ===
+echo ""
+echo -e "${BLUE}============================================${NC}"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    python -c "import torch; mps=torch.backends.mps.is_available(); print(f'       GPU (Apple Silicon): {\"AKTIF\" if mps else \"Pasif\"}')" 2>/dev/null || true
+else
+    python -c "import torch; cuda=torch.cuda.is_available(); print(f'       GPU (CUDA): {\"AKTIF\" if cuda else \"Pasif\"}')" 2>/dev/null || true
 fi
 
 echo ""
@@ -122,12 +101,12 @@ echo -e "${BLUE}============================================${NC}"
 echo -e "${GREEN}   KURULUM TAMAMLANDI!${NC}"
 echo -e "${BLUE}============================================${NC}"
 echo ""
-echo "Sonraki adimlar:"
-echo "  1. Database klasorune dataset'inizi kopyalayin"
-echo "  2. Models klasorune YOLO11 agirliklarini indirin"
-echo "  3. python scripts/run_inference.py --help"
-echo ""
-echo "Virtual environment'i aktif etmek icin:"
-echo "  source venv/bin/activate"
+echo "   Simdi GUI aciliyor..."
+echo "   (Bir sonraki seferde ./launch_gui.sh kullanin)"
 echo ""
 echo -e "${BLUE}============================================${NC}"
+echo ""
+
+# === GUI BASLAT ===
+sleep 2
+python hunter_gui.py

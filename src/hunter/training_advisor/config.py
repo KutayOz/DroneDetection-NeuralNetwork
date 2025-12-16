@@ -83,11 +83,11 @@ class ReporterConfig:
 class LLMConfig:
     """Configuration for LLM integration."""
 
-    enabled: bool = False
-    provider: str = "anthropic"
-    model: str = "claude-3-sonnet-20240229"
-    api_key_env: str = "ANTHROPIC_API_KEY"
-    max_tokens: int = 2000
+    enabled: bool = True
+    provider: str = "openai"
+    model: str = "gpt-4o-mini"  # Ucuz ve etkili
+    api_key_env: str = "OPENAI_API_KEY"
+    max_tokens: int = 1500
     temperature: float = 0.3
     timeout_s: float = 30.0
 
